@@ -1,0 +1,5 @@
+Artificial Intelligence has revolutionized software development.
+Machine learning models can now generate code, debug applications, and optimize performance.
+Natural language processing enables better human-computer interaction.
+Vector databases store semantic embeddings for similarity search.
+RAG systems combine retrieval with generation for better AI responses.

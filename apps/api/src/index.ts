@@ -4,6 +4,7 @@ import multipart from '@fastify/multipart';
 import { config } from 'dotenv';
 import { prisma } from './lib/db.js';  
 import documentsRoutes from './routes/documents.js';  
+import { qdrantService } from './services/qdrantService.js'; 
 
 // Load environment variables
 config();
@@ -32,12 +33,19 @@ await fastify.register(multipart, {
   },
 });
 
+//await qdrantService.initializeCollection();
+
 // Health check
 fastify.get('/health', async () => {
+  const qdrantInfo = await qdrantService.getCollectionInfo();
   return {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    services: {
+      database: 'connected',
+      qdrant: qdrantInfo ? 'connected' : 'disconnected',
+    },
   };
 });
 

@@ -1,6 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../lib/db.js';
 import { documentService } from '../services/documentService.js';
+import { embeddingService } from '../services/embeddingService.js';
+import { qdrantService } from '../services/qdrantService.js';
 
 export default async function documentsRoutes(fastify: FastifyInstance) {
   
@@ -85,19 +87,44 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
       });
 
       // Save chunks to database
-      await prisma.chunk.createMany({
-        data: chunks.map((chunk, index) => ({
-          documentId: document.id,
-          content: chunk,
-          position: index,
-          metadata: {
-            length: chunk.length,
-            wordCount: chunk.split(/\s+/).filter(w => w.length > 0).length,
-          },
-        })),
-      });
+      const createdChunks = await Promise.all(
+        chunks.map((chunk, index) =>
+          prisma.chunk.create({
+            data: {
+              documentId: document.id,
+              content: chunk,
+              position: index,
+              metadata: {
+                length: chunk.length,
+                wordCount: chunk.split(/\s+/).filter(w => w.length > 0).length,
+              },
+            },
+          })
+        )
+      );
 
-      fastify.log.info(`Document uploaded and processed: ${document.id}`);
+      fastify.log.info(`Generating embeddings for ${chunks.length} chunks...`);
+
+      // Generate embeddings for all chunks
+      const embeddings = await embeddingService.generateEmbeddings(chunks);
+
+      // Prepare vectors for Qdrant
+      const vectors = createdChunks.map((chunk, index) => ({
+        id: chunk.id,
+        vector: embeddings[index],
+        payload: {
+          documentId: document.id,
+          chunkId: chunk.id,
+          content: chunk.content,
+          position: chunk.position,
+          metadata: chunk.metadata,
+        },
+      }));
+
+      // Store in Qdrant
+      await qdrantService.upsertVectors(vectors);
+
+      fastify.log.info(`✅ Stored ${vectors.length} vectors in Qdrant`);
 
       return {
         success: true,
