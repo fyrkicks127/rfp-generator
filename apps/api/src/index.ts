@@ -5,6 +5,7 @@ import { config } from 'dotenv';
 import { prisma } from './lib/db.js';  
 import documentsRoutes from './routes/documents.js';  
 import { qdrantService } from './services/qdrantService.js'; 
+import searchRoutes from './routes/search.js';
 
 // Load environment variables
 config();
@@ -83,7 +84,7 @@ fastify.get('/db-test', async () => {
 });
 
 await fastify.register(documentsRoutes, { prefix: '/api/documents' });
-
+await fastify.register(searchRoutes, { prefix: '/api/search' });
 // Start server
 const start = async () => {
   try {
@@ -93,6 +94,8 @@ const start = async () => {
     await fastify.listen({ port, host });
     console.log(`🚀 Server running on http://localhost:${port}`);
     console.log(`📊 Health check: http://localhost:${port}/health`);
+    console.log(`📁 Documents API: http://localhost:${port}/api/documents`);
+    console.log(`🔍 Search API: http://localhost:${port}/api/search`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
