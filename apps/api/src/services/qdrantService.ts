@@ -7,7 +7,7 @@ const client = new QdrantClient({
 });
 
 export interface VectorPoint {
-  id: string; // This will be the chunkId from Prisma
+  id: string;
   vector: number[];
   payload: {
     documentId: string;
@@ -34,7 +34,7 @@ export class QdrantService {
   private collectionName = 'rfp_documents';
 
   /**
-   * Initialize Qdrant collection
+   * Initialize Qdrant collection with indexes
    */
   async initializeCollection(): Promise<void> {
     try {
@@ -44,23 +44,26 @@ export class QdrantService {
         c => c.name === this.collectionName
       );
 
-      if (exists) {
+      if (!exists) {
+        // Create collection
+        await client.createCollection(this.collectionName, {
+          vectors: {
+            size: 1536,
+            distance: 'Cosine',
+          },
+          optimizers_config: {
+            indexing_threshold: 10000,
+          },
+        });
+
+        console.log(`✅ Created collection '${this.collectionName}'`);
+      } else {
         console.log(`✅ Collection '${this.collectionName}' already exists`);
-        return;
       }
 
-      // Create collection
-      await client.createCollection(this.collectionName, {
-        vectors: {
-          size: 1536,
-          distance: 'Cosine',
-        },
-        optimizers_config: {
-          indexing_threshold: 10000,
-        },
-      });
+      // Create payload indexes for filtering
+      await this.createPayloadIndexes();
 
-      console.log(`✅ Created collection '${this.collectionName}'`);
     } catch (error) {
       console.error('Qdrant initialization error:', error);
       throw new Error(`Failed to initialize Qdrant: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -68,8 +71,45 @@ export class QdrantService {
   }
 
   /**
+   * Create payload indexes for filtering
+   */
+  private async createPayloadIndexes(): Promise<void> {
+    try {
+      // Create index for metadata.type (for filtering by document type)
+      try {
+        await client.createPayloadIndex(this.collectionName, {
+          field_name: 'metadata.type',
+          field_schema: 'keyword',
+        });
+        console.log(`✅ Created index for metadata.type`);
+      } catch (error: any) {
+        // Index might already exist, ignore error
+        if (!error.message?.includes('already exists')) {
+          console.log(`ℹ️  Index for metadata.type: ${error.message}`);
+        }
+      }
+
+      // Create index for documentId (for filtering by document)
+      try {
+        await client.createPayloadIndex(this.collectionName, {
+          field_name: 'documentId',
+          field_schema: 'keyword',
+        });
+        console.log(`✅ Created index for documentId`);
+      } catch (error: any) {
+        if (!error.message?.includes('already exists')) {
+          console.log(`ℹ️  Index for documentId: ${error.message}`);
+        }
+      }
+
+    } catch (error) {
+      console.error('Payload index creation error:', error);
+      // Don't throw - indexes are optional for basic functionality
+    }
+  }
+
+  /**
    * Convert CUID to UUID-compatible format
-   * Qdrant requires valid UUID, so we generate one and store original in payload
    */
   private generateUUID(): string {
     return randomUUID();
@@ -83,11 +123,16 @@ export class QdrantService {
       await client.upsert(this.collectionName, {
         wait: true,
         points: points.map(p => ({
-          id: this.generateUUID(), // Generate valid UUID for Qdrant
+          id: this.generateUUID(),
           vector: p.vector,
           payload: {
             ...p.payload,
-            originalId: p.id, // Store original CUID in payload
+            originalId: p.id,
+            // Add metadata with type for filtering
+            metadata: {
+              type: p.payload.metadata?.type || 'OTHER',
+              ...p.payload.metadata,
+            },
           },
         })),
       });

@@ -36,22 +36,28 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Get document type from fields
+      // Get document type from upload form
       const fields = data.fields as any;
-      const type = fields?.type?.value || 'OTHER';
+      const documentType = fields?.type?.value || 'OTHER'; // RFP, PAST_PROPOSAL, etc.
 
-      // Parse document to extract text
+      // ============================================
+      // STEP 1: Parse the document
+      // ============================================
       fastify.log.info(`Parsing document: ${filename}`);
       const parsed = await documentService.parseDocument(buffer, mimetype);
       
-      // Chunk the text
+      // ============================================
+      // STEP 2: Break text into chunks
+      // ============================================
       const chunks = documentService.chunkText(parsed.text);
       fastify.log.info(`Created ${chunks.length} chunks from document`);
 
-      // Extract additional metadata
+      // Extract preview and other metadata
       const extractedMetadata = documentService.extractMetadata(parsed.text);
 
-      // Get existing test user
+      // ============================================
+      // STEP 3: Get user (for now, test user)
+      // ============================================
       const user = await prisma.user.findFirst({
         where: { email: 'test@example.com' }
       });
@@ -62,14 +68,18 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Save document with parsed content - EXPLICITLY set each field
+      // ============================================
+      // STEP 4: Save document to PostgreSQL
+      // ============================================
       const document = await prisma.document.create({
         data: {
           userId: user.id,
           filename,
           fileUrl: `/uploads/${Date.now()}-${filename}`,
-          type,
+          type: documentType, // ← IMPORTANT: This is the document type
           content: parsed.text,
+          
+          // PostgreSQL metadata (for display/reference)
           metadata: {
             size: buffer.length,
             mimetype: mimetype,
@@ -86,7 +96,9 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
         },
       });
 
-      // Save chunks to database
+      // ============================================
+      // STEP 5: Save chunks to PostgreSQL
+      // ============================================
       const createdChunks = await Promise.all(
         chunks.map((chunk, index) =>
           prisma.chunk.create({
@@ -94,6 +106,8 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
               documentId: document.id,
               content: chunk,
               position: index,
+              
+              // Chunk metadata (PostgreSQL)
               metadata: {
                 length: chunk.length,
                 wordCount: chunk.split(/\s+/).filter(w => w.length > 0).length,
@@ -103,29 +117,44 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
         )
       );
 
+      // ============================================
+      // STEP 6: Generate embeddings
+      // ============================================
       fastify.log.info(`Generating embeddings for ${chunks.length} chunks...`);
-
-      // Generate embeddings for all chunks
       const embeddings = await embeddingService.generateEmbeddings(chunks);
 
-      // Prepare vectors for Qdrant
+      // ============================================
+      // STEP 7: Prepare vectors for Qdrant
+      // ============================================
       const vectors = createdChunks.map((chunk, index) => ({
         id: chunk.id,
         vector: embeddings[index],
+        
+        // Qdrant payload (what gets stored in vector DB)
         payload: {
           documentId: document.id,
           chunkId: chunk.id,
           content: chunk.content,
           position: chunk.position,
-          metadata: chunk.metadata,
+          
+          // ← THIS IS THE KEY PART: Add metadata with type
+          metadata: {
+            type: documentType,              // ← IMPORTANT: For filtering by type
+            filename: document.filename,     // ← For display
+            wordCount: (chunk.metadata as any)?.wordCount,
+          },
         },
       }));
 
-      // Store in Qdrant
+      // ============================================
+      // STEP 8: Store vectors in Qdrant
+      // ============================================
       await qdrantService.upsertVectors(vectors);
-
       fastify.log.info(`✅ Stored ${vectors.length} vectors in Qdrant`);
 
+      // ============================================
+      // STEP 9: Return success response
+      // ============================================
       return {
         success: true,
         document: {
@@ -138,6 +167,7 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
           createdAt: document.createdAt,
         },
       };
+      
     } catch (error) {
       fastify.log.error(error);
       return reply.code(500).send({
@@ -222,9 +252,13 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
     try {
       const { id } = request.params as { id: string };
 
+      // Delete from PostgreSQL (chunks will cascade delete)
       await prisma.document.delete({
         where: { id },
       });
+
+      // Delete from Qdrant
+      await qdrantService.deleteByDocumentId(id);
 
       return { 
         success: true,

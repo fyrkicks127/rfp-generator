@@ -6,6 +6,7 @@ import { prisma } from './lib/db.js';
 import documentsRoutes from './routes/documents.js';  
 import { qdrantService } from './services/qdrantService.js'; 
 import searchRoutes from './routes/search.js';
+import generateRoutes from './routes/generate.js';
 
 // Load environment variables
 config();
@@ -34,7 +35,7 @@ await fastify.register(multipart, {
   },
 });
 
-//await qdrantService.initializeCollection();
+await qdrantService.initializeCollection();
 
 // Health check
 fastify.get('/health', async () => {
@@ -85,6 +86,7 @@ fastify.get('/db-test', async () => {
 
 await fastify.register(documentsRoutes, { prefix: '/api/documents' });
 await fastify.register(searchRoutes, { prefix: '/api/search' });
+await fastify.register(generateRoutes, { prefix: '/api/generate' });
 // Start server
 const start = async () => {
   try {
@@ -96,6 +98,7 @@ const start = async () => {
     console.log(`📊 Health check: http://localhost:${port}/health`);
     console.log(`📁 Documents API: http://localhost:${port}/api/documents`);
     console.log(`🔍 Search API: http://localhost:${port}/api/search`);
+    console.log(`🤖 Generate API: http://localhost:${port}/api/generate`); 
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
