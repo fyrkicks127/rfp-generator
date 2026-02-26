@@ -7,6 +7,7 @@ import documentsRoutes from './routes/documents.js';
 import { qdrantService } from './services/qdrantService.js'; 
 import searchRoutes from './routes/search.js';
 import generateRoutes from './routes/generate.js';
+import agentsRoutes from './routes/agents.js';
 
 // Load environment variables
 config();
@@ -87,6 +88,7 @@ fastify.get('/db-test', async () => {
 await fastify.register(documentsRoutes, { prefix: '/api/documents' });
 await fastify.register(searchRoutes, { prefix: '/api/search' });
 await fastify.register(generateRoutes, { prefix: '/api/generate' });
+await fastify.register(agentsRoutes, { prefix: '/api/agents' });
 // Start server
 const start = async () => {
   try {
@@ -99,6 +101,7 @@ const start = async () => {
     console.log(`📁 Documents API: http://localhost:${port}/api/documents`);
     console.log(`🔍 Search API: http://localhost:${port}/api/search`);
     console.log(`🤖 Generate API: http://localhost:${port}/api/generate`); 
+    console.log(`🤖 Agents API: http://localhost:${port}/api/agents`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
