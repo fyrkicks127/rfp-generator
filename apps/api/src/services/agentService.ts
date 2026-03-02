@@ -23,11 +23,11 @@ export class AgentService {
   /**
    * Research Agent: Finds and analyzes relevant context
    */
-  async researchAgent(rfpContent: string): Promise<string> {
+  async researchAgent(rfpContent: string, userId: string): Promise<string> {
     console.log('🔬 Research Agent: Analyzing RFP and finding context...');
 
     // Search for relevant past proposals
-    const searchResults = await searchService.search(rfpContent, 8);
+    const searchResults = await searchService.search(rfpContent, 8, userId);
     
     if (searchResults.length === 0) {
       return 'No relevant past proposals found. Will generate from scratch.';
@@ -214,6 +214,7 @@ Output the complete revised proposal.`,
    */
   async generateWithAgents(
     rfpContent: string,
+    userId: string,
     companyContext?: string
   ): Promise<AgentResult> {
     const startTime = Date.now();
@@ -221,8 +222,8 @@ Output the complete revised proposal.`,
 
     try {
       // Step 1: Research
-      const research = await this.researchAgent(rfpContent);
-      const searchResults = await searchService.search(rfpContent, 8);
+      const research = await this.researchAgent(rfpContent, userId);
+      const searchResults = await searchService.search(rfpContent, 8, userId);
       
       // Step 2: Initial Draft
       const draft = await this.writerAgent(rfpContent, research, companyContext);
@@ -270,6 +271,7 @@ Output the complete revised proposal.`,
    */
   async compareApproaches(
     rfpContent: string,
+    userId: string,
     companyContext?: string
   ): Promise<{
     singleAgent: { proposal: string; time: number; tokens: number };
@@ -294,7 +296,7 @@ Output the complete revised proposal.`,
     const singleTokens = singleResponse.usage?.total_tokens || 0;
 
     // Multi-agent approach
-    const multiAgent = await this.generateWithAgents(rfpContent, companyContext);
+    const multiAgent = await this.generateWithAgents(rfpContent, userId, companyContext);
 
     return {
       singleAgent: {

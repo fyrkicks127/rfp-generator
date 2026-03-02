@@ -8,6 +8,7 @@ import { qdrantService } from './services/qdrantService.js';
 import searchRoutes from './routes/search.js';
 import generateRoutes from './routes/generate.js';
 import agentsRoutes from './routes/agents.js';
+import cacheRoutes from './routes/cache.js';
 
 // Load environment variables
 config();
@@ -89,6 +90,7 @@ await fastify.register(documentsRoutes, { prefix: '/api/documents' });
 await fastify.register(searchRoutes, { prefix: '/api/search' });
 await fastify.register(generateRoutes, { prefix: '/api/generate' });
 await fastify.register(agentsRoutes, { prefix: '/api/agents' });
+await fastify.register(cacheRoutes, { prefix: '/api/cache' });
 // Start server
 const start = async () => {
   try {

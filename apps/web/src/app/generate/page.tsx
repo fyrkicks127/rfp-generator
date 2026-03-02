@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 
 export default function GeneratePage() {
@@ -11,6 +12,7 @@ export default function GeneratePage() {
   const [metadata, setMetadata] = useState<any>(null);
 
   const handleGenerate = async () => {
+  const { getToken } = useAuth();
     if (!rfpContent.trim()) {
       alert('Please enter RFP content');
       return;
@@ -21,10 +23,12 @@ export default function GeneratePage() {
     setMetadata(null);
 
     try {
+      const token = await getToken();
       const response = await fetch('http://localhost:3001/api/generate/proposal', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           rfpContent,

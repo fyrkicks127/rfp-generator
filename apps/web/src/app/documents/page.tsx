@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 
 interface Document {
@@ -16,6 +17,7 @@ interface Document {
 }
 
 export default function DocumentsPage() {
+  const { getToken } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -25,8 +27,17 @@ export default function DocumentsPage() {
   }, []);
 
   const fetchDocuments = async () => {
+    
     try {
-      const response = await fetch('http://localhost:3001/api/documents');
+      
+      const token = await getToken();
+      const response = await fetch('http://localhost:3001/api/documents',{
+      method: 'GET', // optional for GET but good practice
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+    });
       const data = await response.json();
       setDocuments(data.documents);
     } catch (err) {
@@ -42,8 +53,13 @@ export default function DocumentsPage() {
     }
 
     try {
+      const token = await getToken();
       await fetch(`http://localhost:3001/api/documents/${id}`, {
         method: 'DELETE',
+        headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
       });
       fetchDocuments(); // Refresh list
     } catch (err) {

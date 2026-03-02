@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 
 export default function AgentsPage() {
@@ -11,6 +12,7 @@ export default function AgentsPage() {
   const [activeTab, setActiveTab] = useState<'final' | 'research' | 'draft' | 'critique'>('final');
 
   const handleGenerate = async () => {
+  const { getToken } = useAuth();
     if (!rfpContent.trim()) {
       alert('Please enter RFP content');
       return;
@@ -20,10 +22,12 @@ export default function AgentsPage() {
     setResult(null);
 
     try {
+      const token = await getToken();
       const response = await fetch('http://localhost:3001/api/agents/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           rfpContent,

@@ -1,10 +1,11 @@
 'use client';
-
 import { useState } from 'react';
+import { useAuth } from '@clerk/nextjs';
 
 type DocumentType = 'RFP' | 'PAST_PROPOSAL' | 'COMPANY_PROFILE' | 'OTHER';
 
 export default function UploadPage() {
+  const { getToken } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [type, setType] = useState<DocumentType>('RFP');
   const [uploading, setUploading] = useState(false);
@@ -23,8 +24,12 @@ export default function UploadPage() {
     formData.append('type', type);
 
     try {
+      const token = await getToken();
       const response = await fetch('http://localhost:3001/api/documents/upload', {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`, // ← SEND TOKEN
+        },
         body: formData,
       });
 

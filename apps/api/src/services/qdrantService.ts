@@ -73,9 +73,12 @@ export class QdrantService {
   /**
    * Create payload indexes for filtering
    */
+  /**
+ * Create payload indexes for filtering
+ */
   private async createPayloadIndexes(): Promise<void> {
     try {
-      // Create index for metadata.type (for filtering by document type)
+      // Create index for metadata.type
       try {
         await client.createPayloadIndex(this.collectionName, {
           field_name: 'metadata.type',
@@ -83,13 +86,12 @@ export class QdrantService {
         });
         console.log(`✅ Created index for metadata.type`);
       } catch (error: any) {
-        // Index might already exist, ignore error
         if (!error.message?.includes('already exists')) {
           console.log(`ℹ️  Index for metadata.type: ${error.message}`);
         }
       }
 
-      // Create index for documentId (for filtering by document)
+      // Create index for documentId
       try {
         await client.createPayloadIndex(this.collectionName, {
           field_name: 'documentId',
@@ -102,9 +104,21 @@ export class QdrantService {
         }
       }
 
+      // ← ADD THIS: Create index for userId
+      try {
+        await client.createPayloadIndex(this.collectionName, {
+          field_name: 'userId',
+          field_schema: 'keyword',
+        });
+        console.log(`✅ Created index for userId`);
+      } catch (error: any) {
+        if (!error.message?.includes('already exists')) {
+          console.log(`ℹ️  Index for userId: ${error.message}`);
+        }
+      }
+
     } catch (error) {
       console.error('Payload index creation error:', error);
-      // Don't throw - indexes are optional for basic functionality
     }
   }
 

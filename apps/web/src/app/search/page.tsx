@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 
 interface SearchResult {
@@ -16,6 +17,7 @@ interface SearchResult {
 }
 
 export default function SearchPage() {
+  const { getToken } = useAuth();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -28,10 +30,12 @@ export default function SearchPage() {
     setSearched(false);
 
     try {
+      const token = await getToken();
       const response = await fetch('http://localhost:3001/api/search/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           query,

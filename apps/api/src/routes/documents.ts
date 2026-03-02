@@ -3,11 +3,14 @@ import { prisma } from '../lib/db.js';
 import { documentService } from '../services/documentService.js';
 import { embeddingService } from '../services/embeddingService.js';
 import { qdrantService } from '../services/qdrantService.js';
+import { authenticateUser, ensureUser } from '../middleware/auth.js';
 
 export default async function documentsRoutes(fastify: FastifyInstance) {
   
   // Upload document
-  fastify.post('/upload', async (request, reply) => {
+  fastify.post('/upload', {
+    preHandler: [authenticateUser, ensureUser] // ← ADD THIS
+  },async (request, reply) => {
     try {
       const data = await request.file();
       
@@ -58,10 +61,13 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
       // ============================================
       // STEP 3: Get user (for now, test user)
       // ============================================
-      const user = await prisma.user.findFirst({
-        where: { email: 'test@example.com' }
-      });
 
+      // const user = await prisma.user.findFirst({
+      //   where: { email: 'test@example.com' }
+      // });
+      const user = request.user!;
+
+      fastify.log.info(`Fetching documents for user: ${user.id} (${user.email})`); // ← ADD DEBUG LOG
       if (!user) {
         return reply.code(500).send({
           error: 'Test user not found. Run: pnpm db:seed'
@@ -129,18 +135,15 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
       const vectors = createdChunks.map((chunk, index) => ({
         id: chunk.id,
         vector: embeddings[index],
-        
-        // Qdrant payload (what gets stored in vector DB)
         payload: {
           documentId: document.id,
           chunkId: chunk.id,
           content: chunk.content,
           position: chunk.position,
-          
-          // ← THIS IS THE KEY PART: Add metadata with type
+          userId: user.id, // ← ADD THIS - Store userId in Qdrant
           metadata: {
-            type: documentType,              // ← IMPORTANT: For filtering by type
-            filename: document.filename,     // ← For display
+            type: documentType,
+            filename: document.filename,
             wordCount: (chunk.metadata as any)?.wordCount,
           },
         },
@@ -177,19 +180,18 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // List documents
-  fastify.get('/', async (request, reply) => {
-    try {
-      const user = await prisma.user.findFirst({
-        where: { email: 'test@example.com' }
-      });
 
-      if (!user) {
-        return { documents: [], total: 0 };
-      }
+// List documents (PROTECTED)
+  fastify.get('/', {
+    preHandler: [authenticateUser, ensureUser]
+  }, async (request, reply) => {
+    try {
+      const user = request.user!;
+
+      fastify.log.info(`Fetching documents for user: ${user.id} (${user.email})`); // ← ADD DEBUG LOG
 
       const documents = await prisma.document.findMany({
-        where: { userId: user.id },
+        where: { userId: user.id }, // ← This filters by logged-in user
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
@@ -199,6 +201,8 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
           metadata: true,
         },
       });
+
+      fastify.log.info(`Found ${documents.length} documents for user ${user.id}`); // ← ADD DEBUG LOG
 
       return {
         documents,
@@ -211,44 +215,57 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
       });
     }
   });
-
   // Get single document with chunks
-  fastify.get('/:id', async (request, reply) => {
-    try {
-      const { id } = request.params as { id: string };
+fastify.get('/:id', {
+  preHandler: [authenticateUser, ensureUser]
+}, async (request, reply) => {
+  try {
+    const { id } = request.params as { id: string };
+    const user = request.user!; // User from middleware
 
-      const document = await prisma.document.findUnique({
-        where: { id },
-        include: {
-          chunks: {
-            orderBy: { position: 'asc' },
-            select: {
-              id: true,
-              content: true,
-              position: true,
-              metadata: true,
-            },
+    fastify.log.info(`📄 Fetching document ${id} for user ${user.id} (${user.email})`);
+
+    // First, check if document exists AND user owns it
+    const document = await prisma.document.findFirst({
+      where: { 
+        id,
+        userId: user.id // ← SECURITY: Only return if user owns it
+      },
+      include: {
+        chunks: {
+          orderBy: { position: 'asc' },
+          select: {
+            id: true,
+            content: true,
+            position: true,
+            metadata: true,
           },
         },
-      });
+      },
+    });
 
-      if (!document) {
-        return reply.code(404).send({ 
-          error: 'Document not found' 
-        });
-      }
-
-      return { document };
-    } catch (error) {
-      fastify.log.error(error);
-      return reply.code(500).send({
-        error: 'Failed to fetch document',
+    if (!document) {
+      fastify.log.warn(`❌ Document ${id} not found or access denied for user ${user.id}`);
+      return reply.code(404).send({ 
+        error: 'Document not found or access denied' 
       });
     }
-  });
+
+    fastify.log.info(`✅ Document found: ${document.filename} (${document.chunks.length} chunks)`);
+
+    return { document };
+  } catch (error) {
+    fastify.log.error('❌ Error fetching document:', error);
+    return reply.code(500).send({
+      error: 'Failed to fetch document',
+    });
+  }
+});
 
   // Delete document
-  fastify.delete('/:id', async (request, reply) => {
+  fastify.delete('/:id',{
+    preHandler: [authenticateUser, ensureUser] // ← ADD THIS
+  }, async (request, reply) => {
     try {
       const { id } = request.params as { id: string };
 
@@ -259,6 +276,11 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
 
       // Delete from Qdrant
       await qdrantService.deleteByDocumentId(id);
+
+      // ← ADD THIS: Invalidate search cache
+      const { cacheService } = await import('../lib/redis.js');
+      await cacheService.delPattern('search:*');
+      fastify.log.info('🗑️  Cleared search cache');
 
       return { 
         success: true,

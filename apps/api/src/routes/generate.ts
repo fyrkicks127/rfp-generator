@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { generationService } from '../services/generationService.ts';
 import { prisma } from '../lib/db.js';
 import { z } from 'zod';
+import { authenticateUser, ensureUser } from '../middleware/auth.js';
 
 const generateSchema = z.object({
   rfpContent: z.string().min(10, 'RFP content too short'),
@@ -15,8 +16,11 @@ const generateSchema = z.object({
 export default async function generateRoutes(fastify: FastifyInstance) {
   
   // Generate proposal with RAG
-  fastify.post('/proposal', async (request, reply) => {
+  fastify.post('/proposal', {
+    preHandler: [authenticateUser, ensureUser]
+  }, async (request, reply) => {
     try {
+      const user = request.user!; // ← Get user
       const body = request.body as any;
       
       const validated = generateSchema.parse({
@@ -37,6 +41,7 @@ export default async function generateRoutes(fastify: FastifyInstance) {
           companyContext: validated.companyContext,
           tone: validated.tone,
         },
+        user.id,
         validated.provider
       );
 
@@ -105,11 +110,13 @@ export default async function generateRoutes(fastify: FastifyInstance) {
   });
 
   // Generate from uploaded document
-  fastify.post('/from-document/:documentId', async (request, reply) => {
+  fastify.post('/from-document/:documentId', {
+    preHandler: [authenticateUser, ensureUser]
+  }, async (request, reply) => {
     try {
       const { documentId } = request.params as { documentId: string };
       const body = request.body as any;
-
+      const user = request.user!; // ← Get user
       // Get document
       const document = await prisma.document.findUnique({
         where: { id: documentId },
@@ -126,14 +133,11 @@ export default async function generateRoutes(fastify: FastifyInstance) {
           companyContext: body.companyContext,
           tone: body.tone || 'professional',
         },
+        user.id,
         body.provider || 'claude'
       );
 
-      // Save proposal
-      const user = await prisma.user.findFirst({
-        where: { email: 'test@example.com' }
-      });
-
+      
       let proposalId = null;
       if (user) {
         const proposal = await prisma.proposal.create({
@@ -179,10 +183,12 @@ export default async function generateRoutes(fastify: FastifyInstance) {
   });
 
   // Compare RAG vs No-RAG
-  fastify.post('/compare', async (request, reply) => {
+  fastify.post('/compare',{
+    preHandler: [authenticateUser, ensureUser]
+  },  async (request, reply) => {
     try {
       const body = request.body as any;
-
+    const user = request.user!; // ← Get user
       if (!body.rfpContent) {
         return reply.code(400).send({ error: 'rfpContent is required' });
       }
@@ -193,7 +199,8 @@ export default async function generateRoutes(fastify: FastifyInstance) {
       const [withRAG, withoutRAG] = await Promise.all([
         generationService.generateProposal({
           rfpContent: body.rfpContent,
-        }),
+        },
+          user.id),
         generationService.generateWithoutRAG(body.rfpContent),
       ]);
 

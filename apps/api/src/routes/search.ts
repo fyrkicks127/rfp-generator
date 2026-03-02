@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { searchService } from '../services/searchService.js';
 import { z } from 'zod';
+import { authenticateUser, ensureUser } from '../middleware/auth.js';
 
 // Validation schemas
 const searchSchema = z.object({
@@ -11,9 +12,12 @@ const searchSchema = z.object({
 
 export default async function searchRoutes(fastify: FastifyInstance) {
   
-  // Search endpoint
-  fastify.post('/query', async (request, reply) => {
+  // Search endpoint (PROTECTED)
+  fastify.post('/query', {
+    preHandler: [authenticateUser, ensureUser] // ← ADD AUTH
+  }, async (request, reply) => {
     try {
+      const user = request.user!; // ← Get authenticated user
       const body = request.body as any;
       
       // Validate input
@@ -29,12 +33,17 @@ export default async function searchRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Perform search
+      fastify.log.info(`🔍 Search request from user ${user.id}: "${validated.query}"`);
+
+      // Perform search (with userId)
       const results = await searchService.search(
         validated.query,
         validated.limit,
+        user.id, // ← Pass userId
         validated.type
       );
+
+      fastify.log.info(`✅ Returning ${results.length} results to user ${user.id}`);
 
       return {
         query: validated.query,
@@ -59,9 +68,12 @@ export default async function searchRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Search within specific document
-  fastify.post('/document/:documentId', async (request, reply) => {
+  // Search within specific document (PROTECTED)
+  fastify.post('/document/:documentId', {
+    preHandler: [authenticateUser, ensureUser] // ← ADD AUTH
+  }, async (request, reply) => {
     try {
+      const user = request.user!; // ← Get authenticated user
       const { documentId } = request.params as { documentId: string };
       const body = request.body as any;
 
@@ -76,6 +88,7 @@ export default async function searchRoutes(fastify: FastifyInstance) {
       const results = await searchService.searchInDocument(
         body.query,
         documentId,
+        user.id, // ← Pass userId
         limit
       );
 
@@ -95,15 +108,23 @@ export default async function searchRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Get search suggestions (find similar to a chunk)
-  fastify.get('/similar/:chunkId', async (request, reply) => {
+  // Get search suggestions (similar to a chunk) - PROTECTED
+  fastify.get('/similar/:chunkId', {
+    preHandler: [authenticateUser, ensureUser] // ← ADD AUTH
+  }, async (request, reply) => {
     try {
+      const user = request.user!; // ← Get authenticated user
       const { chunkId } = request.params as { chunkId: string };
 
       // Get the chunk content
       const { prisma } = await import('../lib/db.js');
       const chunk = await prisma.chunk.findUnique({
         where: { id: chunkId },
+        include: {
+          document: {
+            select: { userId: true }
+          }
+        }
       });
 
       if (!chunk) {
@@ -112,8 +133,19 @@ export default async function searchRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Search for similar chunks
-      const results = await searchService.search(chunk.content, 5);
+      // Security: Verify user owns the document
+      if (chunk.document.userId !== user.id) {
+        return reply.code(403).send({
+          error: 'Access denied',
+        });
+      }
+
+      // Search for similar chunks (only in user's documents)
+      const results = await searchService.search(
+        chunk.content, 
+        5,
+        user.id // ← Pass userId
+      );
 
       // Filter out the original chunk
       const filtered = results.filter(r => r.chunkId !== chunkId);

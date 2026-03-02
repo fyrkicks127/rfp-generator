@@ -1,12 +1,16 @@
 import { FastifyInstance } from 'fastify';
 import { agentService } from '../services/agentService.js';
 import { prisma } from '../lib/db.js';
+import { authenticateUser, ensureUser } from '../middleware/auth.js';
 
 export default async function agentsRoutes(fastify: FastifyInstance) {
   
   // Multi-agent generation
-  fastify.post('/generate', async (request, reply) => {
+  fastify.post('/generate', {
+    preHandler: [authenticateUser, ensureUser]
+  }, async (request, reply) => {
     try {
+      const user = request.user!;
       const body = request.body as any;
 
       if (!body.rfpContent) {
@@ -17,16 +21,14 @@ export default async function agentsRoutes(fastify: FastifyInstance) {
 
       const result = await agentService.generateWithAgents(
         body.rfpContent,
+        user.id,
         body.companyContext
       );
 
       fastify.log.info(`✅ Multi-agent complete in ${result.processingTime}ms`);
       fastify.log.info(`📊 Used ${result.tokensUsed} tokens, cost: $${result.cost.toFixed(4)}`);
 
-      // Save to database
-      const user = await prisma.user.findFirst({
-        where: { email: 'test@example.com' }
-      });
+      
 
       let proposalId = null;
       if (user) {
@@ -76,10 +78,12 @@ export default async function agentsRoutes(fastify: FastifyInstance) {
   });
 
   // Compare single vs multi-agent
-  fastify.post('/compare', async (request, reply) => {
+  fastify.post('/compare', {
+    preHandler: [authenticateUser, ensureUser]
+  }, async (request, reply) => {
     try {
       const body = request.body as any;
-
+      const user = request.user!;
       if (!body.rfpContent) {
         return reply.code(400).send({ error: 'rfpContent is required' });
       }
@@ -88,7 +92,8 @@ export default async function agentsRoutes(fastify: FastifyInstance) {
 
       const comparison = await agentService.compareApproaches(
         body.rfpContent,
-        body.companyContext
+        user.id,
+        body.companyContext,
       );
 
       return {

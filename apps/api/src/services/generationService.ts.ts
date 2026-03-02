@@ -28,6 +28,7 @@ export class GenerationService {
    */
   async generateProposal(
     request: GenerationRequest,
+    userId: string,
     provider: 'claude' | 'openai' = 'openai'
   ): Promise<GenerationResult> {
     const startTime = Date.now();
@@ -38,6 +39,7 @@ export class GenerationService {
       const searchResults = await searchService.search(
         request.rfpContent,
         5, // Top 5 most relevant chunks
+        userId
        // 'PAST_PROPOSAL' // Only search past proposals
       );
 
