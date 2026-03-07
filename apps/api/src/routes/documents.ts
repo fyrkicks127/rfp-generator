@@ -1,26 +1,25 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '../lib/db.js';
-import { documentService } from '../services/documentService.js';
-import { embeddingService } from '../services/embeddingService.js';
 import { qdrantService } from '../services/qdrantService.js';
 import { authenticateUser, ensureUser } from '../middleware/auth.js';
+import { documentQueue } from '../queues/documentQueue.js';
+import path from 'path';
+import fs from 'fs/promises';
 
 export default async function documentsRoutes(fastify: FastifyInstance) {
   
-  // Upload document
+  // Upload document (PROTECTED) - Now async with queue
   fastify.post('/upload', {
-    preHandler: [authenticateUser, ensureUser] // ← ADD THIS
-  },async (request, reply) => {
+    preHandler: [authenticateUser, ensureUser]
+  }, async (request, reply) => {
     try {
+      const user = request.user!;
       const data = await request.file();
-      
+
       if (!data) {
-        return reply.code(400).send({ 
-          error: 'No file uploaded' 
-        });
+        return reply.code(400).send({ error: 'No file uploaded' });
       }
 
-      // Get file buffer
       const buffer = await data.toBuffer();
       const filename = data.filename;
       const mimetype = data.mimetype;
@@ -29,169 +28,106 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
       const allowedTypes = [
         'application/pdf',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'application/msword',
         'text/plain',
       ];
 
       if (!allowedTypes.includes(mimetype)) {
         return reply.code(400).send({
-          error: 'Invalid file type. Only PDF, DOCX, DOC, and TXT files are allowed.',
+          error: 'Invalid file type. Only PDF, DOCX, and TXT files are allowed.',
         });
       }
 
-      // Get document type from upload form
-      const fields = data.fields as any;
-      const documentType = fields?.type?.value || 'OTHER'; // RFP, PAST_PROPOSAL, etc.
+      const type = (data as any).fields?.type?.value || 'OTHER';
 
-      // ============================================
-      // STEP 1: Parse the document
-      // ============================================
-      fastify.log.info(`Parsing document: ${filename}`);
-      const parsed = await documentService.parseDocument(buffer, mimetype);
-      
-      // ============================================
-      // STEP 2: Break text into chunks
-      // ============================================
-      const chunks = documentService.chunkText(parsed.text);
-      fastify.log.info(`Created ${chunks.length} chunks from document`);
+      // ✅ FIX 1: Create persistent uploads directory in apps/api
+      // Use absolute path from project root
+      const uploadsDir = path.join(process.cwd(), 'apps', 'api', 'uploads');
+      await fs.mkdir(uploadsDir, { recursive: true });
 
-      // Extract preview and other metadata
-      const extractedMetadata = documentService.extractMetadata(parsed.text);
+      // ✅ FIX 2: Save file to persistent location (not /tmp)
+      const persistentFilePath = path.join(uploadsDir, `${Date.now()}-${filename}`);
+      await fs.writeFile(persistentFilePath, buffer);
 
-      // ============================================
-      // STEP 3: Get user (for now, test user)
-      // ============================================
+      fastify.log.info(`💾 File saved to persistent location: ${persistentFilePath}`);
 
-      // const user = await prisma.user.findFirst({
-      //   where: { email: 'test@example.com' }
-      // });
-      const user = request.user!;
-
-      fastify.log.info(`Fetching documents for user: ${user.id} (${user.email})`); // ← ADD DEBUG LOG
-      if (!user) {
-        return reply.code(500).send({
-          error: 'Test user not found. Run: pnpm db:seed'
-        });
-      }
-
-      // ============================================
-      // STEP 4: Save document to PostgreSQL
-      // ============================================
+      // Create document record in database (without chunks yet)
       const document = await prisma.document.create({
         data: {
           userId: user.id,
           filename,
-          fileUrl: `/uploads/${Date.now()}-${filename}`,
-          type: documentType, // ← IMPORTANT: This is the document type
-          content: parsed.text,
-          
-          // PostgreSQL metadata (for display/reference)
+          fileUrl: persistentFilePath, // ✅ FIX 3: Store persistent path in DB
+          type,
           metadata: {
             size: buffer.length,
-            mimetype: mimetype,
-            uploadedAt: new Date().toISOString(),
-            wordCount: parsed.metadata.wordCount,
-            characterCount: parsed.metadata.characterCount,
-            pageCount: parsed.metadata.pageCount || null,
-            chunkCount: chunks.length,
-            preview: extractedMetadata.preview,
-            lineCount: extractedMetadata.lineCount,
-            hasNumbers: extractedMetadata.hasNumbers,
-            hasUrls: extractedMetadata.hasUrls,
+            mimetype,
           },
         },
       });
 
-      // ============================================
-      // STEP 5: Save chunks to PostgreSQL
-      // ============================================
-      const createdChunks = await Promise.all(
-        chunks.map((chunk, index) =>
-          prisma.chunk.create({
-            data: {
-              documentId: document.id,
-              content: chunk,
-              position: index,
-              
-              // Chunk metadata (PostgreSQL)
-              metadata: {
-                length: chunk.length,
-                wordCount: chunk.split(/\s+/).filter(w => w.length > 0).length,
-              },
-            },
-          })
-        )
-      );
+      fastify.log.info(`📄 Document created: ${document.id} for user ${user.id}`);
 
-      // ============================================
-      // STEP 6: Generate embeddings
-      // ============================================
-      fastify.log.info(`Generating embeddings for ${chunks.length} chunks...`);
-      const embeddings = await embeddingService.generateEmbeddings(chunks);
-
-      // ============================================
-      // STEP 7: Prepare vectors for Qdrant
-      // ============================================
-      const vectors = createdChunks.map((chunk, index) => ({
-        id: chunk.id,
-        vector: embeddings[index],
-        payload: {
-          documentId: document.id,
-          chunkId: chunk.id,
-          content: chunk.content,
-          position: chunk.position,
-          userId: user.id, // ← ADD THIS - Store userId in Qdrant
-          metadata: {
-            type: documentType,
-            filename: document.filename,
-            wordCount: (chunk.metadata as any)?.wordCount,
+      // Create job record in database
+      const job = await prisma.job.create({
+        data: {
+          userId: user.id,
+          type: 'DOCUMENT_UPLOAD',
+          status: 'PENDING',
+          data: {
+            documentId: document.id,
+            filename,
+            filepath: persistentFilePath, // ✅ FIX 4: Use persistent path in job data
+            type,
           },
         },
-      }));
+      });
 
-      // ============================================
-      // STEP 8: Store vectors in Qdrant
-      // ============================================
-      await qdrantService.upsertVectors(vectors);
-      fastify.log.info(`✅ Stored ${vectors.length} vectors in Qdrant`);
-
-      // ============================================
-      // STEP 9: Return success response
-      // ============================================
-      return {
-        success: true,
-        document: {
-          id: document.id,
-          filename: document.filename,
-          type: document.type,
-          size: buffer.length,
-          wordCount: parsed.metadata.wordCount,
-          chunkCount: chunks.length,
-          createdAt: document.createdAt,
+      // Add job to queue
+      await documentQueue.add(
+        'process-document',
+        {
+          documentId: document.id,
+          userId: user.id,
+          filename,
+          filepath: persistentFilePath, // ✅ FIX 5: Pass persistent path to worker
+          type,
+          mimetype,
         },
-      };
-      
+        {
+          jobId: job.id,
+          priority: (user.plan === 'PRO' || user.plan === 'TEAM') ? 1 : 10,
+        }
+      );
+
+      fastify.log.info(`✅ Job queued: ${job.id}`);
+
+      return reply.code(202).send({
+        message: 'Document upload queued for processing',
+        documentId: document.id,
+        jobId: job.id,
+        status: 'PENDING',
+      });
+
     } catch (error) {
       fastify.log.error(error);
       return reply.code(500).send({
-        error: 'Failed to upload document',
+        error: 'Upload failed',
         message: error instanceof Error ? error.message : 'Unknown error',
       });
     }
   });
 
 
-// List documents (PROTECTED)
+  // List documents (PROTECTED)
   fastify.get('/', {
     preHandler: [authenticateUser, ensureUser]
   }, async (request, reply) => {
     try {
       const user = request.user!;
 
-      fastify.log.info(`Fetching documents for user: ${user.id} (${user.email})`); // ← ADD DEBUG LOG
+      fastify.log.info(`Fetching documents for user: ${user.id} (${user.email})`);
 
       const documents = await prisma.document.findMany({
-        where: { userId: user.id }, // ← This filters by logged-in user
+        where: { userId: user.id },
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
@@ -202,7 +138,7 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
         },
       });
 
-      fastify.log.info(`Found ${documents.length} documents for user ${user.id}`); // ← ADD DEBUG LOG
+      fastify.log.info(`Found ${documents.length} documents for user ${user.id}`);
 
       return {
         documents,
@@ -215,59 +151,69 @@ export default async function documentsRoutes(fastify: FastifyInstance) {
       });
     }
   });
+
   // Get single document with chunks
-fastify.get('/:id', {
-  preHandler: [authenticateUser, ensureUser]
-}, async (request, reply) => {
-  try {
-    const { id } = request.params as { id: string };
-    const user = request.user!; // User from middleware
-
-    fastify.log.info(`📄 Fetching document ${id} for user ${user.id} (${user.email})`);
-
-    // First, check if document exists AND user owns it
-    const document = await prisma.document.findFirst({
-      where: { 
-        id,
-        userId: user.id // ← SECURITY: Only return if user owns it
-      },
-      include: {
-        chunks: {
-          orderBy: { position: 'asc' },
-          select: {
-            id: true,
-            content: true,
-            position: true,
-            metadata: true,
-          },
-        },
-      },
-    });
-
-    if (!document) {
-      fastify.log.warn(`❌ Document ${id} not found or access denied for user ${user.id}`);
-      return reply.code(404).send({ 
-        error: 'Document not found or access denied' 
-      });
-    }
-
-    fastify.log.info(`✅ Document found: ${document.filename} (${document.chunks.length} chunks)`);
-
-    return { document };
-  } catch (error) {
-    fastify.log.error('❌ Error fetching document:', error);
-    return reply.code(500).send({
-      error: 'Failed to fetch document',
-    });
-  }
-});
-
-  // Delete document
-  fastify.delete('/:id',{
-    preHandler: [authenticateUser, ensureUser] // ← ADD THIS
+  fastify.get('/:id', {
+    preHandler: [authenticateUser, ensureUser]
   }, async (request, reply) => {
     try {
       const { id } = request.params as { id: string };
+      const user = request.user!;
+
+      fastify.log.info(`📄 Fetching document ${id} for user ${user.id} (${user.email})`);
+
+      const document = await prisma.document.findFirst({
+        where: { 
+          id,
+          userId: user.id
+        },
+        include: {
+          chunks: {
+            orderBy: { position: 'asc' },
+            select: {
+              id: true,
+              content: true,
+              position: true,
+              metadata: true,
+            },
+          },
+        },
+      });
+
+      if (!document) {
+        fastify.log.warn(`❌ Document ${id} not found or access denied for user ${user.id}`);
+        return reply.code(404).send({ 
+          error: 'Document not found or access denied' 
+        });
+      }
+
+      fastify.log.info(`✅ Document found: ${document.filename} (${document.chunks.length} chunks)`);
+
+      return { document };
+    } catch (error) {
+      fastify.log.error('❌ Error fetching document:');
+      return reply.code(500).send({
+        error: 'Failed to fetch document',
+      });
+    }
+  });
+
+  // Delete document
+  fastify.delete('/:id', {
+    preHandler: [authenticateUser, ensureUser]
+  }, async (request, reply) => {
+    try {
+      const { id } = request.params as { id: string };
+      const user = request.user!;
+
+      // ✅ FIX 6: Get document before deleting to access file path
+      const document = await prisma.document.findFirst({
+        where: { id, userId: user.id },
+      });
+
+      if (!document) {
+        return reply.code(404).send({ error: 'Document not found' });
+      }
 
       // Delete from PostgreSQL (chunks will cascade delete)
       await prisma.document.delete({
@@ -277,10 +223,20 @@ fastify.get('/:id', {
       // Delete from Qdrant
       await qdrantService.deleteByDocumentId(id);
 
-      // ← ADD THIS: Invalidate search cache
+      // ✅ FIX 7: Delete physical file if it exists
+      if (document.fileUrl) {
+        try {
+          await fs.unlink(document.fileUrl);
+          fastify.log.info(`🗑️ Deleted file: ${document.fileUrl}`);
+        } catch (err) {
+          fastify.log.warn(`⚠️ Could not delete file: ${document.fileUrl}`);// ,err
+        }
+      }
+
+      // Invalidate search cache
       const { cacheService } = await import('../lib/redis.js');
       await cacheService.delPattern('search:*');
-      fastify.log.info('🗑️  Cleared search cache');
+      fastify.log.info('🗑️ Cleared search cache');
 
       return { 
         success: true,

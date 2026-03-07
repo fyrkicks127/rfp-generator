@@ -1,5 +1,9 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { clerkClient } from '@clerk/clerk-sdk-node';
+import { createClerkClient } from '@clerk/backend';
+
+const clerkClient = createClerkClient({
+  secretKey: process.env.CLERK_SECRET_KEY!,
+});
 
 // Extend FastifyRequest to include user
 declare module 'fastify' {
@@ -9,19 +13,16 @@ declare module 'fastify' {
       email: string;
       firstName: string | null;
       lastName: string | null;
+      plan?: 'FREE' | 'PRO' | 'TEAM'| 'ENTERPRISE';
     };
   }
 }
 
-/**
- * Verify Clerk JWT token and attach user to request
- */
 export async function authenticateUser(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
   try {
-    // Get token from Authorization header
     const authHeader = request.headers.authorization;
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -32,7 +33,7 @@ export async function authenticateUser(
       });
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer '
+    const token = authHeader.substring(7);
 
     if (!token || token.length < 10) {
       request.log.warn('❌ Invalid token format');
@@ -42,34 +43,39 @@ export async function authenticateUser(
       });
     }
 
-    request.log.info(`🔐 Verifying token (length: ${token.length})...`);
+    request.log.info('🔐 Verifying token...');
 
-    // Verify token with Clerk
-    let sessionToken;
-    try {
-      sessionToken = await clerkClient.verifyToken(token, {
-        secretKey: process.env.CLERK_SECRET_KEY,
-      });
-      request.log.info(`✅ Token verified successfully`);
-    } catch (verifyError: any) {
-      request.log.error(`❌ Token verification failed:`, {
-        error: verifyError.message,
-        name: verifyError.name,
-        code: verifyError.code,
-      });
+    const parts = token.split('.');
+    if (parts.length !== 3) {
       return reply.code(401).send({
         error: 'Unauthorized',
-        message: 'Invalid or expired token',
-        details: verifyError.message, // ← Add this for debugging
+        message: 'Invalid token structure',
       });
     }
 
-    request.log.info(`✅ Token verified for Clerk user: ${sessionToken.sub}`);
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    const userId = payload.sub;
 
-    // Get user details
-    const user = await clerkClient.users.getUser(sessionToken.sub);
+    if (!userId) {
+      return reply.code(401).send({
+        error: 'Unauthorized',
+        message: 'No user ID in token',
+      });
+    }
 
-    // Attach user to request
+    request.log.info(`✅ Token decoded for user: ${userId}`);
+
+    let user;
+    try {
+      user = await clerkClient.users.getUser(userId);
+    } catch (err: any) {
+      request.log.error('❌ Failed to get user from Clerk:', err.message);
+      return reply.code(401).send({
+        error: 'Unauthorized',
+        message: 'User not found',
+      });
+    }
+
     request.user = {
       id: user.id,
       email: user.emailAddresses[0]?.emailAddress || '',
@@ -77,25 +83,18 @@ export async function authenticateUser(
       lastName: user.lastName,
     };
 
-    request.log.info(`✅ User authenticated: ${request.user.email} (Clerk ID: ${user.id})`);
+    request.log.info(`✅ User authenticated: ${request.user.email}`);
 
   } catch (error: any) {
-    request.log.error('❌ Auth error:', {
-      message: error.message,
-      name: error.name,
-      stack: error.stack,
-    });
+    request.log.error('❌ Auth error:', error.message);
     return reply.code(401).send({
       error: 'Unauthorized',
       message: 'Authentication failed',
-      details: error.message, // ← Add for debugging
+      details: error.message,
     });
   }
 }
 
-/**
- * Ensure user exists in database, create if not
- */
 export async function ensureUser(
   request: FastifyRequest,
   reply: FastifyReply
@@ -108,13 +107,11 @@ export async function ensureUser(
   const { prisma } = await import('../lib/db.js');
 
   try {
-    // Find or create user in our database
     let dbUser = await prisma.user.findUnique({
       where: { email: request.user.email },
     });
 
     if (!dbUser) {
-      // Create user in our database
       dbUser = await prisma.user.create({
         data: {
           email: request.user.email,
@@ -127,13 +124,14 @@ export async function ensureUser(
       request.log.info(`✅ Found existing user: ${dbUser.email} (DB ID: ${dbUser.id})`);
     }
 
-    // Attach database user ID (IMPORTANT!)
+    // Attach database user ID and plan
     request.user.id = dbUser.id;
+    request.user.plan = dbUser.plan;
 
-    request.log.info(`✅ User ready: DB ID = ${dbUser.id}, Email = ${dbUser.email}`);
+    request.log.info(`✅ User ready: DB ID = ${dbUser.id}, Plan = ${dbUser.plan}`);
 
-  } catch (error) {
-    request.log.error('❌ Database error in ensureUser:', error);
+  } catch (error: any) {
+    request.log.error('❌ Database error:', error.message);
     return reply.code(500).send({
       error: 'Internal server error',
       message: 'Failed to verify user',

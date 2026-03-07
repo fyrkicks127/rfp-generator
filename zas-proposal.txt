@@ -96,9 +96,3 @@ Initial expectations include:
 10. Conclusion
 Migrating to AWS positions Zas Orbit Tech for long‑term success by modernizing its infrastructure, improving agility, and enabling innovation. Fyrkicks is ready to lead this transformation with a structured, secure, and cost‑effective migration approach.
 
-If you want, I can also turn this into:
-- a PowerPoint-style outline,
-- a formal PDF‑ready proposal,
-- a more technical deep‑dive, or
-- a presentation script for your client meeting.
-Just tell me the direction you want to take next.

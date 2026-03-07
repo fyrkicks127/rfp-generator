@@ -9,6 +9,11 @@ import searchRoutes from './routes/search.js';
 import generateRoutes from './routes/generate.js';
 import agentsRoutes from './routes/agents.js';
 import cacheRoutes from './routes/cache.js';
+import jobsRoutes from './routes/jobs.js';
+//import { serverAdapter } from './lib/bullBoard.js';
+import adminRoutes from './routes/admin.js';
+
+import './workers/documentWorker.js'; // for jobs
 
 // Load environment variables
 config();
@@ -91,6 +96,13 @@ await fastify.register(searchRoutes, { prefix: '/api/search' });
 await fastify.register(generateRoutes, { prefix: '/api/generate' });
 await fastify.register(agentsRoutes, { prefix: '/api/agents' });
 await fastify.register(cacheRoutes, { prefix: '/api/cache' });
+await fastify.register(jobsRoutes, { prefix: '/api/jobs' });
+await fastify.register(adminRoutes, { prefix: '/api/admin' });
+// await fastify.register(serverAdapter.registerPlugin(), {
+//   prefix: '/admin/queues',
+//   basePath: '/',
+// });
+//console.log('📊 Bull Board available at: http://localhost:3001/admin/queues');
 // Start server
 const start = async () => {
   try {
