@@ -24,6 +24,7 @@ model User {
   
   documents Document[]
   proposals Proposal[]
+  jobs      Job[]
   
   @@index([email])
 }
@@ -39,9 +40,9 @@ model Document {
   id          String       @id @default(cuid())
   userId      String
   filename    String
-  fileUrl     String
+  fileUrl     String?
   type        DocumentType
-  content     String       @db.Text
+  content     String?       @db.Text
   metadata    Json?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -116,4 +117,43 @@ model GenerationMetrics {
   
   @@index([createdAt])
   @@index([success])
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  userId      String
+  type        JobType
+  status      JobStatus @default(PENDING)
+  data        Json      // Job input data
+  result      Json?     // Job output/result
+  error       String?   // Error message if failed
+  progress    Int       @default(0) // 0-100
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+enum JobType {
+  DOCUMENT_UPLOAD
+  GENERATE_PROPOSAL
+  GENERATE_MULTI_AGENT
+  BATCH_EMBED
+  EXPORT_PDF
+  EXPORT_PPTX
+}
+
+enum JobStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  FAILED
+  CANCELLED
 }

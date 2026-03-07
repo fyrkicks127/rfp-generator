@@ -4,6 +4,16 @@ import multipart from '@fastify/multipart';
 import { config } from 'dotenv';
 import { prisma } from './lib/db.js';  
 import documentsRoutes from './routes/documents.js';  
+import { qdrantService } from './services/qdrantService.js'; 
+import searchRoutes from './routes/search.js';
+import generateRoutes from './routes/generate.js';
+import agentsRoutes from './routes/agents.js';
+import cacheRoutes from './routes/cache.js';
+import jobsRoutes from './routes/jobs.js';
+//import { serverAdapter } from './lib/bullBoard.js';
+import adminRoutes from './routes/admin.js';
+
+import './workers/documentWorker.js'; // for jobs
 
 // Load environment variables
 config();
@@ -32,12 +42,19 @@ await fastify.register(multipart, {
   },
 });
 
+await qdrantService.initializeCollection();
+
 // Health check
 fastify.get('/health', async () => {
+  const qdrantInfo = await qdrantService.getCollectionInfo();
   return {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    services: {
+      database: 'connected',
+      qdrant: qdrantInfo ? 'connected' : 'disconnected',
+    },
   };
 });
 
@@ -75,7 +92,17 @@ fastify.get('/db-test', async () => {
 });
 
 await fastify.register(documentsRoutes, { prefix: '/api/documents' });
-
+await fastify.register(searchRoutes, { prefix: '/api/search' });
+await fastify.register(generateRoutes, { prefix: '/api/generate' });
+await fastify.register(agentsRoutes, { prefix: '/api/agents' });
+await fastify.register(cacheRoutes, { prefix: '/api/cache' });
+await fastify.register(jobsRoutes, { prefix: '/api/jobs' });
+await fastify.register(adminRoutes, { prefix: '/api/admin' });
+// await fastify.register(serverAdapter.registerPlugin(), {
+//   prefix: '/admin/queues',
+//   basePath: '/',
+// });
+//console.log('📊 Bull Board available at: http://localhost:3001/admin/queues');
 // Start server
 const start = async () => {
   try {
@@ -85,6 +112,10 @@ const start = async () => {
     await fastify.listen({ port, host });
     console.log(`🚀 Server running on http://localhost:${port}`);
     console.log(`📊 Health check: http://localhost:${port}/health`);
+    console.log(`📁 Documents API: http://localhost:${port}/api/documents`);
+    console.log(`🔍 Search API: http://localhost:${port}/api/search`);
+    console.log(`🤖 Generate API: http://localhost:${port}/api/generate`); 
+    console.log(`🤖 Agents API: http://localhost:${port}/api/agents`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);

@@ -16,8 +16,9 @@ export class DocumentService {
    */
   async parseDocument(
     buffer: Buffer,
-    mimetype: string
+    mimetype?: string
   ): Promise<ParsedDocument> {
+    
     switch (mimetype) {
       case 'application/pdf':
         return this.parsePDF(buffer);
@@ -38,25 +39,37 @@ export class DocumentService {
    * Parse PDF document using pdfjs-dist
    */
   private async parsePDF(buffer: Buffer): Promise<ParsedDocument> {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    
     try {
-      // Load PDF document
-      const loadingTask = pdfjsLib.getDocument({
+      const pdf = await pdfjs.getDocument({
         data: new Uint8Array(buffer),
         useSystemFonts: true,
-      });
+      }).promise;
 
-      const pdf = await loadingTask.promise;
+      let text = '';
       const pageCount = pdf.numPages;
       
-      // Extract text from all pages
-      const textPromises = [];
-      for (let i = 1; i <= pageCount; i++) {
-        textPromises.push(this.extractPageText(pdf, i));
+      // ✅ FIX 1: Add validation for page count
+      if (pageCount === 0) {
+        throw new Error('PDF has no pages');
       }
-      
-      const pageTexts = await Promise.all(textPromises);
-      const text = pageTexts.join('\n\n');
-      const wordCount = this.countWords(text);
+
+      for (let i = 1; i <= pageCount; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const pageText = content.items
+          .map((item: any) => item.str)
+          .join(' ');
+        text += pageText + '\n';
+      }
+
+      // ✅ FIX 2: Validate extracted text
+      if (!text || text.trim().length === 0) {
+        throw new Error('PDF contains no extractable text (might be scanned/image-based)');
+      }
+
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
       
       return {
         text: text.trim(),
@@ -67,24 +80,9 @@ export class DocumentService {
         },
       };
     } catch (error) {
-      console.error('PDF parse error:', error);
+      console.error('PDF parsing error:', error);
       throw new Error(`Failed to parse PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-  }
-
-  /**
-   * Extract text from a single PDF page
-   */
-  private async extractPageText(pdf: any, pageNumber: number): Promise<string> {
-    const page = await pdf.getPage(pageNumber);
-    const textContent = await page.getTextContent();
-    
-    // Combine all text items
-    const text = textContent.items
-      .map((item: any) => item.str)
-      .join(' ');
-    
-    return text;
   }
 
   /**
@@ -95,6 +93,12 @@ export class DocumentService {
       const result = await mammoth.extractRawText({ buffer });
       
       const text = result.value;
+      
+      // ✅ FIX 3: Validate extracted text from DOCX
+      if (!text || text.trim().length === 0) {
+        throw new Error('DOCX document is empty or contains no text');
+      }
+      
       const wordCount = this.countWords(text);
       
       return {
@@ -114,6 +118,12 @@ export class DocumentService {
    */
   private async parsePlainText(buffer: Buffer): Promise<ParsedDocument> {
     const text = buffer.toString('utf-8');
+    
+    // ✅ FIX 4: Validate plain text is not empty
+    if (!text || text.trim().length === 0) {
+      throw new Error('Text file is empty');
+    }
+    
     const wordCount = this.countWords(text);
     
     return {
@@ -138,12 +148,32 @@ export class DocumentService {
 
   /**
    * Chunk text into smaller pieces for embedding
+   * Returns array of strings (not ChunkData objects)
    */
   chunkText(
-    text: string,
+    text: string | undefined,
     chunkSize: number = 1000,
     overlap: number = 200
   ): string[] {
+    // ✅ FIX 5: Add comprehensive validation with detailed logging
+    if (!text) {
+      console.warn('⚠️ chunkText received undefined/null text');
+      return [];
+    }
+
+    if (typeof text !== 'string') {
+      console.warn('⚠️ chunkText received non-string value:', typeof text);
+      return [];
+    }
+
+    if (text.trim().length === 0) {
+      console.warn('⚠️ chunkText received empty string');
+      return [];
+    }
+
+    // ✅ FIX 6: Now safe to use text.length
+    console.log(`📏 Chunking text: ${text.length} characters into ~${chunkSize} char chunks`);
+
     const chunks: string[] = [];
     let start = 0;
 
@@ -164,6 +194,7 @@ export class DocumentService {
       }
     }
 
+    console.log(`✅ Created ${chunks.length} chunks from text`);
     return chunks;
   }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 
 interface Chunk {
@@ -22,6 +23,7 @@ interface Document {
 }
 
 export default function DocumentDetailPage() {
+  const { getToken } = useAuth();
   const params = useParams();
   const router = useRouter();
   const [document, setDocument] = useState<Document | null>(null);
@@ -36,7 +38,14 @@ export default function DocumentDetailPage() {
 
   const fetchDocument = async (id: string) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/documents/${id}`);
+      const token = await getToken();
+      const response = await fetch(`http://localhost:3001/api/documents/${id}`, {
+        method: 'GET',
+        headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      });
       
       if (!response.ok) {
         throw new Error('Document not found');
