@@ -5,6 +5,7 @@ import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
 
 export default function GeneratePage() {
+  const { getToken } = useAuth(); // ✅ At top level
   const [rfpContent, setRfpContent] = useState('');
   const [companyContext, setCompanyContext] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -12,7 +13,6 @@ export default function GeneratePage() {
   const [metadata, setMetadata] = useState<any>(null);
 
   const handleGenerate = async () => {
-  const { getToken } = useAuth();
     if (!rfpContent.trim()) {
       alert('Please enter RFP content');
       return;
@@ -24,6 +24,9 @@ export default function GeneratePage() {
 
     try {
       const token = await getToken();
+
+      console.log('Sending request with:', { rfpContent: rfpContent.substring(0, 50) + '...' });
+
       const response = await fetch('http://localhost:3001/api/generate/proposal', {
         method: 'POST',
         headers: {
@@ -31,18 +34,21 @@ export default function GeneratePage() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          rfpContent,
-          companyContext,
-          tone: 'professional',
-          provider: 'claude',
-          saveProposal: true,
+          rfpContent,           // ✅ Match backend schema
+          companyContext,       // ✅ Match backend schema
+          tone: 'professional', // ✅ Optional
+          provider: 'claude',   // ✅ Optional (uses OpenAI actually)
+          saveProposal: true,   // ✅ Save to DB
         }),
       });
 
+      console.log('Response status:', response.status);
+
       const data = await response.json();
+      console.log('Response data:', data);
 
       if (!response.ok) {
-        throw new Error(data.error || 'Generation failed');
+        throw new Error(data.message || data.error || 'Generation failed');
       }
 
       setProposal(data.proposal);
@@ -116,7 +122,7 @@ export default function GeneratePage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-600">Model</p>
-                    <p className="font-semibold">{metadata.model?.split('-')[1] || 'Claude'}</p>
+                    <p className="font-semibold">{metadata.model || 'GPT-4'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Processing Time</p>
@@ -132,7 +138,7 @@ export default function GeneratePage() {
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Retrieved Chunks</p>
-                    <p className="font-semibold">{metadata.retrievedChunks}</p>
+                    <p className="font-semibold">{metadata.retrievedChunks || 0}</p>
                   </div>
                   {metadata.proposalId && (
                     <div>
