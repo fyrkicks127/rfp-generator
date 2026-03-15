@@ -6,7 +6,7 @@ import fs from 'fs/promises';
 
 export default async function exportRoutes(fastify: FastifyInstance) {
   
-  // Export proposal as PDF
+  // Export as PDF
   fastify.post('/pdf', {
     preHandler: [authenticateUser, ensureUser]
   }, async (request, reply) => {
@@ -22,9 +22,6 @@ export default async function exportRoutes(fastify: FastifyInstance) {
         });
       }
 
-      fastify.log.info(`📄 Exporting PDF for user ${user.id}`);
-
-      // Create export record
       const exportRecord = await prisma.export.create({
         data: {
           userId: user.id,
@@ -35,14 +32,12 @@ export default async function exportRoutes(fastify: FastifyInstance) {
         },
       });
 
-      // Generate PDF
       const filepath = await exportService.exportToPDF({
         title,
         content,
         format: 'PDF',
       });
 
-      // Update export record
       await prisma.export.update({
         where: { id: exportRecord.id },
         data: {
@@ -51,8 +46,6 @@ export default async function exportRoutes(fastify: FastifyInstance) {
           completedAt: new Date(),
         },
       });
-
-      fastify.log.info(`✅ PDF exported: ${filepath}`);
 
       return {
         exportId: exportRecord.id,
@@ -69,45 +62,47 @@ export default async function exportRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Export proposal as PPTX
-  fastify.post('/pptx', {
-    preHandler: [authenticateUser, ensureUser]
-  }, async (request, reply) => {
-    try {
-      const user = request.user!;
-      const body = request.body as any;
+  // Export as PPTX
+  // Export as PPTX
+fastify.post('/pptx', {
+  preHandler: [authenticateUser, ensureUser]
+}, async (request, reply) => {
+  try {
+    const user = request.user!;
+    const body = request.body as any;
 
-      const { proposalId, title, content, template = 'default' } = body;
+    const { proposalId, title, content } = body;
 
-      if (!title || !content) {
-        return reply.code(400).send({
-          error: 'Missing required fields: title, content',
-        });
-      }
+    fastify.log.info(`📊 PPTX Export Request - Title: ${title?.substring(0, 50)}, Content Length: ${content?.length}`);
 
-      fastify.log.info(`📊 Exporting PPTX for user ${user.id}`);
-
-      // Create export record
-      const exportRecord = await prisma.export.create({
-        data: {
-          userId: user.id,
-          proposalId: proposalId || null,
-          filename: `${title}.pptx`,
-          format: 'PPTX',
-          status: 'PROCESSING',
-          metadata: { template },
-        },
+    if (!title || !content) {
+      fastify.log.warn('❌ Missing fields:');//, { title: !!title, content: !!content }
+      return reply.code(400).send({
+        error: 'Missing required fields: title, content',
       });
+    }
 
-      // Generate PPTX
+    const exportRecord = await prisma.export.create({
+      data: {
+        userId: user.id,
+        proposalId: proposalId || null,
+        filename: `${title}.pptx`,
+        format: 'PPTX',
+        status: 'PROCESSING',
+      },
+    });
+
+    fastify.log.info(`📝 Created export record: ${exportRecord.id}`);
+
+    try {
       const filepath = await exportService.exportToPPTX({
         title,
         content,
         format: 'PPTX',
-        template,
       });
 
-      // Update export record
+      fastify.log.info(`✅ PPTX created at: ${filepath}`);
+
       await prisma.export.update({
         where: { id: exportRecord.id },
         data: {
@@ -117,22 +112,36 @@ export default async function exportRoutes(fastify: FastifyInstance) {
         },
       });
 
-      fastify.log.info(`✅ PPTX exported: ${filepath}`);
-
       return {
         exportId: exportRecord.id,
         filename: exportRecord.filename,
         format: 'PPTX',
         status: 'COMPLETED',
       };
-    } catch (error) {
-      fastify.log.error('PPTX export error:');//, error
-      return reply.code(500).send({
-        error: 'Failed to export PPTX',
-        message: error instanceof Error ? error.message : 'Unknown error',
+    } catch (serviceError) {
+      fastify.log.error('❌ Export service error:', serviceError);//
+      
+      // Update export record to failed
+      await prisma.export.update({
+        where: { id: exportRecord.id },
+        data: {
+          status: 'FAILED',
+          metadata: {
+            error: serviceError instanceof Error ? serviceError.message : 'Unknown error',
+          },
+        },
       });
+
+      throw serviceError;
     }
-  });
+  } catch (error) {
+    fastify.log.error('PPTX export error:');//, error
+    return reply.code(500).send({
+      error: 'Failed to export PPTX',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
 
   // Download export file
   fastify.get('/download/:exportId', {
@@ -142,21 +151,17 @@ export default async function exportRoutes(fastify: FastifyInstance) {
       const user = request.user!;
       const { exportId } = request.params as { exportId: string };
 
-      // Get export record
       const exportRecord = await prisma.export.findFirst({
         where: {
           id: exportId,
-          userId: user.id, // Security: only user's exports
+          userId: user.id,
         },
       });
 
       if (!exportRecord || !exportRecord.fileUrl) {
-        return reply.code(404).send({
-          error: 'Export not found',
-        });
+        return reply.code(404).send({ error: 'Export not found' });
       }
 
-      // Send file
       const stream = await fs.readFile(exportRecord.fileUrl);
       
       reply
@@ -166,42 +171,7 @@ export default async function exportRoutes(fastify: FastifyInstance) {
 
     } catch (error) {
       fastify.log.error('Download error:');//, error
-      return reply.code(500).send({
-        error: 'Failed to download file',
-      });
-    }
-  });
-
-  // List user's exports
-  fastify.get('/history', {
-    preHandler: [authenticateUser, ensureUser]
-  }, async (request, reply) => {
-    try {
-      const user = request.user!;
-
-      const exports = await prisma.export.findMany({
-        where: { userId: user.id },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-        select: {
-          id: true,
-          filename: true,
-          format: true,
-          status: true,
-          createdAt: true,
-          completedAt: true,
-        },
-      });
-
-      return {
-        exports,
-        total: exports.length,
-      };
-    } catch (error) {
-      fastify.log.error('Export history error:');//, error
-      return reply.code(500).send({
-        error: 'Failed to get export history',
-      });
+      return reply.code(500).send({ error: 'Failed to download file' });
     }
   });
 }

@@ -3,14 +3,16 @@
 import { useState } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
+import ExportModal from '@/components/ExportModal';
 
 export default function AgentsPage() {
-  const { getToken } = useAuth(); // ✅ At top level
+  const { getToken } = useAuth();
   const [rfpContent, setRfpContent] = useState('');
   const [companyContext, setCompanyContext] = useState('');
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'final' | 'research' | 'draft' | 'critique'>('final');
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const handleGenerate = async () => {
     if (!rfpContent.trim()) {
@@ -23,9 +25,6 @@ export default function AgentsPage() {
 
     try {
       const token = await getToken();
-
-      console.log('Sending multi-agent request...');
-
       const response = await fetch('http://localhost:3001/api/agents/generate', {
         method: 'POST',
         headers: {
@@ -33,22 +32,18 @@ export default function AgentsPage() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          rfpContent,      // ✅ Match backend
-          companyContext,  // ✅ Match backend
+          rfpContent,
+          companyContext,
         }),
       });
 
-      console.log('Response status:', response.status);
-
       const data = await response.json();
-      console.log('Response data:', data);
 
       if (!response.ok) {
-        throw new Error(data.message || data.error || 'Generation failed');
+        throw new Error(data.error || 'Generation failed');
       }
 
       setResult(data);
-      setActiveTab('final');
 
     } catch (error) {
       console.error('Generation error:', error);
@@ -76,7 +71,7 @@ export default function AgentsPage() {
               <textarea
                 value={rfpContent}
                 onChange={(e) => setRfpContent(e.target.value)}
-                placeholder="Paste your RFP...&#10;&#10;Example:&#10;We need an AI-powered customer service platform that can handle 10,000+ concurrent chats, integrate with our CRM, and provide analytics."
+                placeholder="Paste your RFP..."
                 className="w-full h-64 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
             </div>
@@ -86,7 +81,7 @@ export default function AgentsPage() {
               <textarea
                 value={companyContext}
                 onChange={(e) => setCompanyContext(e.target.value)}
-                placeholder="Company background...&#10;&#10;Example:&#10;We are an AI consulting firm specializing in customer service automation with 50+ successful implementations."
+                placeholder="Company background..."
                 className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
             </div>
@@ -121,109 +116,107 @@ export default function AgentsPage() {
 
           {/* Output Section */}
           <div className="space-y-6">
-            {result && result.metadata && (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <h2 className="text-xl font-semibold mb-4">Stats</h2>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Processing Time</p>
-                    <p className="font-semibold">{(result.metadata.processingTime / 1000).toFixed(1)}s</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Tokens Used</p>
-                    <p className="font-semibold">{result.metadata.tokensUsed?.toLocaleString()}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Cost</p>
-                    <p className="font-semibold">${result.metadata.cost?.toFixed(4)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Context Used</p>
-                    <p className="font-semibold">{result.metadata.retrievedChunks || 0} chunks</p>
-                  </div>
-                  {result.metadata.proposalId && (
-                    <div className="col-span-2">
-                      <p className="text-sm text-gray-600">Saved to Database</p>
-                      <p className="font-semibold text-green-600">✓ Yes</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
             {result && (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <div className="flex gap-2 mb-4 border-b">
-                  <button
-                    onClick={() => setActiveTab('final')}
-                    className={`px-4 py-2 font-medium ${activeTab === 'final' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
-                  >
-                    Final Proposal
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('research')}
-                    className={`px-4 py-2 font-medium ${activeTab === 'research' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
-                  >
-                    Research
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('draft')}
-                    className={`px-4 py-2 font-medium ${activeTab === 'draft' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
-                  >
-                    Initial Draft
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('critique')}
-                    className={`px-4 py-2 font-medium ${activeTab === 'critique' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
-                  >
-                    Critique
-                  </button>
+              <>
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                  <h2 className="text-xl font-semibold mb-4">Stats</h2>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-600">Processing Time</p>
+                      <p className="font-semibold">{(result.metadata.processingTime / 1000).toFixed(1)}s</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Tokens Used</p>
+                      <p className="font-semibold">{result.metadata.tokensUsed?.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Cost</p>
+                      <p className="font-semibold">${result.metadata.cost?.toFixed(4)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Context Used</p>
+                      <p className="font-semibold">{result.metadata.retrievedChunks} chunks</p>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="prose max-w-none">
-                  {activeTab === 'final' && (
-                    <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
-                      {result.proposal}
-                    </pre>
-                  )}
-                  {activeTab === 'research' && result.iterations && (
-                    <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
-                      {result.iterations.research}
-                    </pre>
-                  )}
-                  {activeTab === 'draft' && result.iterations && (
-                    <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
-                      {result.iterations.draft}
-                    </pre>
-                  )}
-                  {activeTab === 'critique' && result.iterations && (
-                    <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
-                      {result.iterations.critique}
-                    </pre>
-                  )}
-                </div>
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                  <div className="flex justify-between items-center mb-4 border-b pb-2">
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setActiveTab('final')}
+                        className={`px-4 py-2 font-medium ${activeTab === 'final' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
+                      >
+                        Final Proposal
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('research')}
+                        className={`px-4 py-2 font-medium ${activeTab === 'research' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
+                      >
+                        Research
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('draft')}
+                        className={`px-4 py-2 font-medium ${activeTab === 'draft' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
+                      >
+                        Initial Draft
+                      </button>
+                      <button
+                        onClick={() => setActiveTab('critique')}
+                        className={`px-4 py-2 font-medium ${activeTab === 'critique' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600'}`}
+                      >
+                        Critique
+                      </button>
+                    </div>
+                    {activeTab === 'final' && (
+                      <button
+                        onClick={() => setShowExportModal(true)}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium"
+                      >
+                        📥 Export
+                      </button>
+                    )}
+                  </div>
 
-                <button
-                  onClick={() => {
-                    let text = '';
-                    if (activeTab === 'final') {
-                      text = result.proposal;
-                    } else if (result.iterations) {
-                      text = result.iterations[activeTab];
-                    }
-                    navigator.clipboard.writeText(text);
-                    alert('Copied to clipboard!');
-                  }}
-                  className="mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm"
-                >
-                  📋 Copy
-                </button>
-              </div>
+                  <div className="prose max-w-none">
+                    {activeTab === 'final' && (
+                      <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
+                        {result.proposal}
+                      </pre>
+                    )}
+                    {activeTab === 'research' && (
+                      <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
+                        {result.iterations.research}
+                      </pre>
+                    )}
+                    {activeTab === 'draft' && (
+                      <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
+                        {result.iterations.draft}
+                      </pre>
+                    )}
+                    {activeTab === 'critique' && (
+                      <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
+                        {result.iterations.critique}
+                      </pre>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      const text = activeTab === 'final' ? result.proposal : result.iterations[activeTab];
+                      navigator.clipboard.writeText(text);
+                    }}
+                    className="mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm"
+                  >
+                    📋 Copy
+                  </button>
+                </div>
+              </>
             )}
 
             {!result && !generating && (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
-                <div className="text-6xl mb-4">🤖🤖🤖🤖</div>
+                <div className="text-6xl mb-4">🤖🤖🤖</div>
                 <p className="text-gray-600 mb-2">
                   Multi-agent proposal will appear here
                 </p>
@@ -250,6 +243,15 @@ export default function AgentsPage() {
           </Link>
         </div>
       </div>
+
+      {/* Export Modal */}
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        proposalId={result?.metadata?.proposalId}
+        title="Multi-Agent Generated Proposal"
+        content={result?.proposal || ''}
+      />
     </div>
   );
 }

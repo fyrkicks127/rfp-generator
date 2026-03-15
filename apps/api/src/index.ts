@@ -12,6 +12,7 @@ import cacheRoutes from './routes/cache.js';
 import jobsRoutes from './routes/jobs.js';
 //import { serverAdapter } from './lib/bullBoard.js';
 import adminRoutes from './routes/admin.js';
+import exportRoutes from './routes/export.js';
 
 import './workers/documentWorker.js'; // for jobs
 
@@ -98,6 +99,7 @@ await fastify.register(agentsRoutes, { prefix: '/api/agents' });
 await fastify.register(cacheRoutes, { prefix: '/api/cache' });
 await fastify.register(jobsRoutes, { prefix: '/api/jobs' });
 await fastify.register(adminRoutes, { prefix: '/api/admin' });
+await fastify.register(exportRoutes, { prefix: '/api/export' });
 // await fastify.register(serverAdapter.registerPlugin(), {
 //   prefix: '/admin/queues',
 //   basePath: '/',

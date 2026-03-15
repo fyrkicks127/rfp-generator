@@ -20,7 +20,6 @@ export default function ExportModal({
 }: ExportModalProps) {
   const { getToken } = useAuth();
   const [format, setFormat] = useState<'PDF' | 'PPTX'>('PDF');
-  const [template, setTemplate] = useState('default');
   const [exporting, setExporting] = useState(false);
 
   if (!isOpen) return null;
@@ -42,7 +41,6 @@ export default function ExportModal({
           proposalId,
           title,
           content,
-          template: format === 'PPTX' ? template : undefined,
         }),
       });
 
@@ -120,24 +118,6 @@ export default function ExportModal({
             </button>
           </div>
         </div>
-
-        {/* Template Selection (PPTX only) */}
-        {format === 'PPTX' && (
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Template
-            </label>
-            <select
-              value={template}
-              onChange={(e) => setTemplate(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="default">Default</option>
-              <option value="modern">Modern</option>
-              <option value="professional">Professional</option>
-            </select>
-          </div>
-        )}
 
         {/* Filename Preview */}
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">

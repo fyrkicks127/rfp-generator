@@ -3,14 +3,16 @@
 import { useState } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import Link from 'next/link';
+import ExportModal from '@/components/ExportModal';
 
 export default function GeneratePage() {
-  const { getToken } = useAuth(); // ✅ At top level
+  const { getToken } = useAuth();
   const [rfpContent, setRfpContent] = useState('');
   const [companyContext, setCompanyContext] = useState('');
   const [generating, setGenerating] = useState(false);
   const [proposal, setProposal] = useState('');
   const [metadata, setMetadata] = useState<any>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const handleGenerate = async () => {
     if (!rfpContent.trim()) {
@@ -24,9 +26,6 @@ export default function GeneratePage() {
 
     try {
       const token = await getToken();
-
-      console.log('Sending request with:', { rfpContent: rfpContent.substring(0, 50) + '...' });
-
       const response = await fetch('http://localhost:3001/api/generate/proposal', {
         method: 'POST',
         headers: {
@@ -34,21 +33,18 @@ export default function GeneratePage() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          rfpContent,           // ✅ Match backend schema
-          companyContext,       // ✅ Match backend schema
-          tone: 'professional', // ✅ Optional
-          provider: 'claude',   // ✅ Optional (uses OpenAI actually)
-          saveProposal: true,   // ✅ Save to DB
+          rfpContent,
+          companyContext,
+          tone: 'professional',
+          provider: 'claude',
+          saveProposal: true,
         }),
       });
 
-      console.log('Response status:', response.status);
-
       const data = await response.json();
-      console.log('Response data:', data);
 
       if (!response.ok) {
-        throw new Error(data.message || data.error || 'Generation failed');
+        throw new Error(data.error || 'Generation failed');
       }
 
       setProposal(data.proposal);
@@ -122,7 +118,7 @@ export default function GeneratePage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-gray-600">Model</p>
-                    <p className="font-semibold">{metadata.model || 'GPT-4'}</p>
+                    <p className="font-semibold">{metadata.model?.split('-')[1] || 'Claude'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Processing Time</p>
@@ -138,7 +134,7 @@ export default function GeneratePage() {
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Retrieved Chunks</p>
-                    <p className="font-semibold">{metadata.retrievedChunks || 0}</p>
+                    <p className="font-semibold">{metadata.retrievedChunks}</p>
                   </div>
                   {metadata.proposalId && (
                     <div>
@@ -154,12 +150,20 @@ export default function GeneratePage() {
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-xl font-semibold">Generated Proposal</h2>
-                  <button
-                    onClick={() => navigator.clipboard.writeText(proposal)}
-                    className="text-sm px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg"
-                  >
-                    📋 Copy
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => navigator.clipboard.writeText(proposal)}
+                      className="text-sm px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg"
+                    >
+                      📋 Copy
+                    </button>
+                    <button
+                      onClick={() => setShowExportModal(true)}
+                      className="text-sm px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium"
+                    >
+                      📥 Export
+                    </button>
+                  </div>
                 </div>
                 <div className="prose max-w-none">
                   <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700 font-sans">
@@ -196,6 +200,15 @@ export default function GeneratePage() {
           </Link>
         </div>
       </div>
+
+      {/* Export Modal */}
+      <ExportModal
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        proposalId={metadata?.proposalId}
+        title="Generated Proposal"
+        content={proposal}
+      />
     </div>
   );
 }
